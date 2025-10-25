@@ -26,6 +26,7 @@ import tempfile
 import threading
 import traceback
 import uuid
+import zipfile
 from io import BytesIO
 
 import torch
@@ -216,6 +217,8 @@ class ModelWorker:
     @torch.inference_mode()
     def generate(self, uid, params):
         gemini_generated = False
+        generated_image_path = None
+        return_gemini_image = params.pop("return_gemini_image", False)
         if 'image' in params:
             image = params["image"]
             image = load_image_from_base64(image)
@@ -229,6 +232,7 @@ class ModelWorker:
                 # Save the Gemini-generated image
                 output_img_path = os.path.join(SAVE_DIR, f'{str(uid)}_output_img.png')
                 image.save(output_img_path)
+                generated_image_path = output_img_path
                 logger.info(f"Saved Gemini-generated image to {output_img_path}")
             else:
                 raise ValueError("No input image or text provided")
@@ -263,8 +267,21 @@ class ModelWorker:
             save_path = os.path.join(SAVE_DIR, f'{str(uid)}.{type}')
             mesh.export(save_path)
 
+        response_path = save_path
+        download_filename = os.path.basename(save_path)
+
+        if gemini_generated and return_gemini_image and generated_image_path:
+            zip_save_path = os.path.join(SAVE_DIR, f'{str(uid)}.zip')
+            with zipfile.ZipFile(zip_save_path, 'w', compression=zipfile.ZIP_DEFLATED) as zip_file:
+                mesh_arcname = f"model.{type}"
+                image_arcname = "gemini_image.png"
+                zip_file.write(save_path, arcname=mesh_arcname)
+                zip_file.write(generated_image_path, arcname=image_arcname)
+            response_path = zip_save_path
+            download_filename = os.path.basename(zip_save_path)
+
         torch.cuda.empty_cache()
-        return save_path, uid
+        return response_path, download_filename, uid
 
 
 app = FastAPI()
@@ -285,8 +302,8 @@ async def generate(request: Request):
     params = await request.json()
     uid = uuid.uuid4()
     try:
-        file_path, uid = worker.generate(uid, params)
-        return FileResponse(file_path)
+        file_path, download_filename, uid = worker.generate(uid, params)
+        return FileResponse(file_path, filename=download_filename)
     except ValueError as e:
         traceback.print_exc()
         print("Caught ValueError:", e)
