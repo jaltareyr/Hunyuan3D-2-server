@@ -118,6 +118,47 @@ while True:
 - `texture` (bool, default: false): Whether to generate textures
 - `face_count` (int, default: 40000): Maximum number of faces when texture is enabled
 - `type` (string, default: "glb"): Output format (e.g., "glb", "obj")
+- `return_gemini_image` (bool, default: false): If true, returns a ZIP with both the model and Gemini image
+- `return_pickle` (bool, default: false): If true, returns a pickled trimesh object instead of a file format
+
+### Using Pickled Mesh Objects
+
+When `return_pickle: true`, the API returns a pickled Python trimesh object instead of an exported file. This is useful for:
+
+**Benefits:**
+- Direct access to the trimesh object without export/import overhead
+- Preserves all mesh properties and metadata
+- Easy programmatic manipulation
+- Can be converted to any format later
+
+**Example:**
+```python
+import pickle
+import requests
+
+# Request pickled mesh
+response = requests.post(
+    "http://localhost:8081/generate",
+    json={
+        "text": "A robot toy",
+        "return_pickle": True
+    }
+)
+
+# Save and load the pickled mesh
+with open("mesh.pkl", "wb") as f:
+    f.write(response.content)
+
+with open("mesh.pkl", "rb") as f:
+    mesh = pickle.load(f)
+
+# Now you can manipulate the mesh directly
+print(f"Vertices: {len(mesh.vertices)}, Faces: {len(mesh.faces)}")
+mesh.apply_scale(2.0)  # Scale the mesh
+mesh.export("output.glb")  # Export to any format
+```
+
+See `example_pickled_mesh.py` for a complete example with mesh manipulation.
 
 ## How It Works
 

@@ -21,6 +21,7 @@ import base64
 import logging
 import logging.handlers
 import os
+import pickle
 import sys
 import tempfile
 import threading
@@ -274,22 +275,38 @@ class ModelWorker:
             mesh = FaceReducer()(mesh, max_facenum=params.get('face_count', 40000))
             mesh = self.pipeline_tex(mesh, image)
 
-        type = params.get('type', 'glb')
-        with tempfile.NamedTemporaryFile(suffix=f'.{type}', delete=False) as temp_file:
-            mesh.export(temp_file.name)
-            mesh = trimesh.load(temp_file.name)
-            save_path = os.path.join(SAVE_DIR, f'{str(uid)}.{type}')
-            mesh.export(save_path)
+        # Check if user wants pickled mesh instead of file format
+        return_pickle = params.get('return_pickle', False)
+        
+        if return_pickle:
+            # Return pickled mesh object
+            pickle_path = os.path.join(SAVE_DIR, f'{str(uid)}.pkl')
+            with open(pickle_path, 'wb') as f:
+                pickle.dump(mesh, f)
+            response_path = pickle_path
+            download_filename = os.path.basename(pickle_path)
+        else:
+            # Export to file format (glb, obj, etc.)
+            type = params.get('type', 'glb')
+            with tempfile.NamedTemporaryFile(suffix=f'.{type}', delete=False) as temp_file:
+                mesh.export(temp_file.name)
+                mesh = trimesh.load(temp_file.name)
+                save_path = os.path.join(SAVE_DIR, f'{str(uid)}.{type}')
+                mesh.export(save_path)
 
-        response_path = save_path
-        download_filename = os.path.basename(save_path)
+            response_path = save_path
+            download_filename = os.path.basename(save_path)
 
+        # Handle Gemini image return if requested
         if gemini_generated and return_gemini_image and generated_image_path:
             zip_save_path = os.path.join(SAVE_DIR, f'{str(uid)}.zip')
             with zipfile.ZipFile(zip_save_path, 'w', compression=zipfile.ZIP_DEFLATED) as zip_file:
-                mesh_arcname = f"model.{type}"
+                if return_pickle:
+                    mesh_arcname = "model.pkl"
+                else:
+                    mesh_arcname = f"model.{type}"
                 image_arcname = "gemini_image.png"
-                zip_file.write(save_path, arcname=mesh_arcname)
+                zip_file.write(response_path, arcname=mesh_arcname)
                 zip_file.write(generated_image_path, arcname=image_arcname)
             response_path = zip_save_path
             download_filename = os.path.basename(zip_save_path)
