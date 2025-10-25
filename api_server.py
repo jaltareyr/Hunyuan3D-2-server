@@ -224,7 +224,7 @@ class ModelWorker:
                 text = params["text"]
                 prompt = f"Generate a high-quality image of {text}. Note that the request object should be at the center of the image with a clear plain background. This image will be used for 3D model generation so provide the image as clear as possible."
                 # Use Gemini to generate an image from the text
-                image = self.generate_image_from_text_gemini(text)
+                image = self.generate_image_from_text_gemini(prompt)
                 gemini_generated = True
                 # Save the Gemini-generated image
                 output_img_path = os.path.join(SAVE_DIR, f'{str(uid)}_output_img.png')
