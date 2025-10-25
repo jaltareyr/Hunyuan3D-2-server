@@ -151,7 +151,8 @@ class ModelWorker:
                  tex_model_path='tencent/Hunyuan3D-2',
                  model_subfolder='hunyuan3d-dit-v2-mini-turbo',
                  device='cuda',
-                 enable_tex=False):
+                 enable_tex=False,
+                 use_safetensors=True):
         self.model_path = model_path
         self.model_subfolder = model_subfolder
         self.worker_id = worker_id
@@ -163,7 +164,7 @@ class ModelWorker:
         self.rembg = BackgroundRemover()
         self.gemini_client = genai.Client()
         pipeline_kwargs = dict(
-            use_safetensors=True,
+            use_safetensors=use_safetensors,
             device=device,
         )
         if model_subfolder:
@@ -343,15 +344,24 @@ if __name__ == "__main__":
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--limit-model-concurrency", type=int, default=5)
     parser.add_argument('--enable_tex', action='store_true')
+    parser.add_argument('--use_ckpt', action='store_true', help='Use .ckpt files instead of .safetensors')
+    parser.add_argument('--models_dir', type=str, default=None, help='Directory containing models (sets HY3DGEN_MODELS env var)')
     args = parser.parse_args()
     logger.info(f"args: {args}")
+
+    # Set models directory if provided
+    if args.models_dir:
+        os.environ['HY3DGEN_MODELS'] = args.models_dir
+        logger.info(f"Set HY3DGEN_MODELS to {args.models_dir}")
 
     model_semaphore = asyncio.Semaphore(args.limit_model_concurrency)
 
     model_subfolder = args.model_subfolder if args.model_subfolder else None
+    use_safetensors = not args.use_ckpt
     worker = ModelWorker(model_path=args.model_path,
                          model_subfolder=model_subfolder,
                          device=args.device,
                          enable_tex=args.enable_tex,
-                         tex_model_path=args.tex_model_path)
+                         tex_model_path=args.tex_model_path,
+                         use_safetensors=use_safetensors)
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")

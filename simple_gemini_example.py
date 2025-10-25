@@ -28,7 +28,7 @@ def generate_3d_from_text(text_prompt, output_filename="model.glb"):
         "text": text_prompt,
         "seed": 1234,
         "octree_resolution": 128,
-        "num_inference_steps": 5,
+        "num_inference_steps": 40,
         "guidance_scale": 5.0,
         "texture": False,
         "type": "glb"
@@ -68,18 +68,6 @@ def generate_3d_from_text(text_prompt, output_filename="model.glb"):
 if __name__ == "__main__":
     # Example 1: Simple object
     generate_3d_from_text(
-        "A cute cartoon robot with big eyes",
-        "robot.glb"
-    )
-    
-    # Example 2: More detailed description
-    generate_3d_from_text(
-        "A medieval sword with intricate engravings on the blade and a jeweled handle",
-        "sword.glb"
-    )
-    
-    # Example 3: Organic object
-    generate_3d_from_text(
-        "A red apple sitting on a wooden table",
-        "apple.glb"
+        "A horse in running action",
+        "output.glb"
     )
