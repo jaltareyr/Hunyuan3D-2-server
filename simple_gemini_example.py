@@ -27,9 +27,9 @@ def generate_3d_from_text(text_prompt, output_filename="model.glb"):
     payload = {
         "text": text_prompt,
         "seed": 1234,
-        "octree_resolution": 128,
+        "octree_resolution": 256,
         "num_inference_steps": 40,
-        "guidance_scale": 5.0,
+        "guidance_scale": 4.0,
         "texture": False,
         "type": "glb"
     }
@@ -68,6 +68,6 @@ def generate_3d_from_text(text_prompt, output_filename="model.glb"):
 if __name__ == "__main__":
     # Example 1: Simple object
     generate_3d_from_text(
-        "A horse in running action",
+        "A single tiger",
         "output.glb"
     )

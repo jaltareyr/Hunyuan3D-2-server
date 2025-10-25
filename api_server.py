@@ -222,6 +222,7 @@ class ModelWorker:
         else:
             if 'text' in params:
                 text = params["text"]
+                prompt = f"Generate a high-quality image of {text}. Note that the request object should be at the center of the image with a clear plain background. This image will be used for 3D model generation so provide the image as clear as possible."
                 # Use Gemini to generate an image from the text
                 image = self.generate_image_from_text_gemini(text)
                 gemini_generated = True
