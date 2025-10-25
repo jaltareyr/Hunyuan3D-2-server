@@ -1,33 +1,20 @@
-# Hunyuan 3D is licensed under the TENCENT HUNYUAN NON-COMMERCIAL LICENSE AGREEMENT
-# except for the third-party components listed below.
-# Hunyuan 3D does not impose any additional limitations beyond what is outlined
-# in the repsective licenses of these third-party components.
-# Users must comply with all terms and conditions of original licenses of these third-party
-# components and must ensure that the usage of the third party components adheres to
-# all relevant laws and regulations.
+# generate_server.py  (updated)
+# ─────────────────────────────────────────────────────────────────────────────
+# NOTE: Returns ONLY a single .obj file; no GLB, no ZIP, no pickle.
+# Texture/painter code lives in hy3dgen/texpaint_util.py
+# ─────────────────────────────────────────────────────────────────────────────
 
-# For avoidance of doubts, Hunyuan 3D means the large language models and
-# their software and algorithms, including trained model weights, parameters (including
-# optimizer states), machine-learning model code, inference-enabling code, training-enabling code,
-# fine-tuning enabling code and other elements of the foregoing made publicly available
-# by Tencent in accordance with TENCENT HUNYUAN COMMUNITY LICENSE AGREEMENT.
-
-"""
-A model worker executes the model.
-"""
 import argparse
 import asyncio
 import base64
 import logging
 import logging.handlers
 import os
-import pickle
 import sys
 import tempfile
 import threading
 import traceback
 import uuid
-import zipfile
 from io import BytesIO
 
 import torch
@@ -40,106 +27,68 @@ from google import genai
 from google.genai import types
 
 from hy3dgen.rembg import BackgroundRemover
-from hy3dgen.shapegen import Hunyuan3DDiTFlowMatchingPipeline, FloaterRemover, DegenerateFaceRemover, FaceReducer, \
-    MeshSimplifier
-from hy3dgen.texgen import Hunyuan3DPaintPipeline
-from hy3dgen.text2image import HunyuanDiTPipeline
+from hy3dgen.shapegen import Hunyuan3DDiTFlowMatchingPipeline, FloaterRemover, DegenerateFaceRemover, FaceReducer
+# texture utility (new)
+from hy3dgen.texpaint_util import colorize_mesh_from_reference
 
 LOGDIR = '.'
+SAVE_DIR = 'gradio_cache'
+os.makedirs(SAVE_DIR, exist_ok=True)
 
 server_error_msg = "**NETWORK ERROR DUE TO HIGH TRAFFIC. PLEASE REGENERATE OR REFRESH THIS PAGE.**"
 moderation_msg = "YOUR INPUT VIOLATES OUR CONTENT MODERATION GUIDELINES. PLEASE TRY AGAIN."
-
 handler = None
+worker_id = str(uuid.uuid4())[:6]
 
 
 def build_logger(logger_name, logger_filename):
     global handler
-
-    formatter = logging.Formatter(
-        fmt="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-
-    # Set the format of root handlers
+    formatter = logging.Formatter(fmt="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+                                  datefmt="%Y-%m-%d %H:%M:%S",)
     if not logging.getLogger().handlers:
         logging.basicConfig(level=logging.INFO)
     logging.getLogger().handlers[0].setFormatter(formatter)
 
-    # Redirect stdout and stderr to loggers
-    stdout_logger = logging.getLogger("stdout")
-    stdout_logger.setLevel(logging.INFO)
-    sl = StreamToLogger(stdout_logger, logging.INFO)
-    sys.stdout = sl
+    stdout_logger = logging.getLogger("stdout"); stdout_logger.setLevel(logging.INFO)
+    sl = StreamToLogger(stdout_logger, logging.INFO); sys.stdout = sl
 
-    stderr_logger = logging.getLogger("stderr")
-    stderr_logger.setLevel(logging.ERROR)
-    sl = StreamToLogger(stderr_logger, logging.ERROR)
-    sys.stderr = sl
+    stderr_logger = logging.getLogger("stderr"); stderr_logger.setLevel(logging.ERROR)
+    sl = StreamToLogger(stderr_logger, logging.ERROR); sys.stderr = sl
 
-    # Get logger
-    logger = logging.getLogger(logger_name)
-    logger.setLevel(logging.INFO)
-
-    # Add a file handler for all loggers
+    logger = logging.getLogger(logger_name); logger.setLevel(logging.INFO)
     if handler is None:
         os.makedirs(LOGDIR, exist_ok=True)
         filename = os.path.join(LOGDIR, logger_filename)
-        handler = logging.handlers.TimedRotatingFileHandler(
-            filename, when='D', utc=True, encoding='UTF-8')
-        handler.setFormatter(formatter)
-
+        handler_new = logging.handlers.TimedRotatingFileHandler(filename, when='D', utc=True, encoding='UTF-8')
+        handler_new.setFormatter(formatter); handler = handler_new
         for name, item in logging.root.manager.loggerDict.items():
             if isinstance(item, logging.Logger):
                 item.addHandler(handler)
-
     return logger
 
 
 class StreamToLogger(object):
-    """
-    Fake file-like stream object that redirects writes to a logger instance.
-    """
-
     def __init__(self, logger, log_level=logging.INFO):
         self.terminal = sys.stdout
         self.logger = logger
         self.log_level = log_level
         self.linebuf = ''
-
     def __getattr__(self, attr):
         return getattr(self.terminal, attr)
-
     def write(self, buf):
         temp_linebuf = self.linebuf + buf
         self.linebuf = ''
         for line in temp_linebuf.splitlines(True):
-            # From the io.TextIOWrapper docs:
-            #   On output, if newline is None, any '\n' characters written
-            #   are translated to the system default line separator.
-            # By default sys.stdout.write() expects '\n' newlines and then
-            # translates them so this is still cross platform.
             if line[-1] == '\n':
                 self.logger.log(self.log_level, line.rstrip())
             else:
                 self.linebuf += line
-
     def flush(self):
         if self.linebuf != '':
             self.logger.log(self.log_level, self.linebuf.rstrip())
         self.linebuf = ''
 
 
-def pretty_print_semaphore(semaphore):
-    if semaphore is None:
-        return "None"
-    return f"Semaphore(value={semaphore._value}, locked={semaphore.locked()})"
-
-
-SAVE_DIR = 'gradio_cache'
-os.makedirs(SAVE_DIR, exist_ok=True)
-
-worker_id = str(uuid.uuid4())[:6]
 logger = build_logger("controller", f"{SAVE_DIR}/controller.log")
 
 
@@ -150,10 +99,8 @@ def load_image_from_base64(image):
 class ModelWorker:
     def __init__(self,
                  model_path='tencent/Hunyuan3D-2mini',
-                 tex_model_path='tencent/Hunyuan3D-2',
                  model_subfolder='hunyuan3d-dit-v2-mini-turbo',
                  device='cuda',
-                 enable_tex=False,
                  use_safetensors=True):
         self.model_path = model_path
         self.model_subfolder = model_subfolder
@@ -164,56 +111,37 @@ class ModelWorker:
             logger.info(f"Using subfolder {model_subfolder} for model {model_path}")
 
         self.rembg = BackgroundRemover()
-        # Initialize Gemini client lazily (only when needed)
         self.gemini_client = None
-        pipeline_kwargs = dict(
-            use_safetensors=use_safetensors,
-            device=device,
-        )
+
+        pipeline_kwargs = dict(use_safetensors=use_safetensors, device=device)
         if model_subfolder:
             pipeline_kwargs["subfolder"] = model_subfolder
-        self.pipeline = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(
-            model_path,
-            **pipeline_kwargs,
-        )
+        self.pipeline = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(model_path, **pipeline_kwargs)
         self.pipeline.enable_flashvdm(mc_algo='mc')
-        # self.pipeline_t2i = HunyuanDiTPipeline(
-        #     'Tencent-Hunyuan/HunyuanDiT-v1.1-Diffusers-Distilled',
-        #     device=device
-        # )
-        if enable_tex:
-            self.pipeline_tex = Hunyuan3DPaintPipeline.from_pretrained(tex_model_path)
 
     def generate_image_from_text_gemini(self, text_prompt):
-        """Generate an image from text using Gemini API"""
         logger.info(f"Generating image from text using Gemini: {text_prompt}")
-        
-        # Initialize Gemini client on first use
         if self.gemini_client is None:
             try:
                 self.gemini_client = genai.Client()
                 logger.info("Initialized Gemini client")
             except ValueError as e:
-                error_msg = (
-                    "Failed to initialize Gemini client. Please set GOOGLE_API_KEY environment variable. "
-                    "Get your API key from: https://ai.google.dev/"
-                )
-                logger.error(error_msg)
-                raise ValueError(error_msg) from e
-        
+                error_msg = ("Failed to initialize Gemini client. Please set GOOGLE_API_KEY environment variable. "
+                             "Get your API key from: https://ai.google.dev/")
+                logger.error(error_msg); raise ValueError(error_msg) from e
+
         response = self.gemini_client.models.generate_content(
             model="gemini-2.5-flash-image",
             contents=[text_prompt],
         )
-        
+
         for part in response.candidates[0].content.parts:
-            if part.inline_data is not None:
+            if getattr(part, "inline_data", None) is not None:
                 image = Image.open(BytesIO(part.inline_data.data))
                 logger.info("Successfully generated image from text using Gemini")
                 return image
-            elif part.text is not None:
+            elif getattr(part, "text", None) is not None:
                 logger.info(f"Gemini response text: {part.text}")
-        
         raise ValueError("Gemini did not return an image")
 
     def get_queue_length(self):
@@ -224,106 +152,83 @@ class ModelWorker:
                 model_semaphore._waiters) if model_semaphore._waiters is not None else 0)
 
     def get_status(self):
-        return {
-            "speed": 1,
-            "queue_length": self.get_queue_length(),
-        }
+        return {"speed": 1, "queue_length": self.get_queue_length()}
 
     @torch.inference_mode()
     def generate(self, uid, params):
-        gemini_generated = False
-        generated_image_path = None
-        return_gemini_image = params.pop("return_gemini_image", False)
+        # 1) Acquire input image (base64 or Gemini-from-text)
         if 'image' in params:
-            image = params["image"]
-            image = load_image_from_base64(image)
+            image = load_image_from_base64(params["image"])
         else:
-            if 'text' in params:
-                text = params["text"]
-                prompt = f"Generate a high-quality image of {text}. Note that the request object should be at the center of the image with a clear plain background. This image will be used for 3D model generation so provide the image as clear as possible."
-                # Use Gemini to generate an image from the text
-                image = self.generate_image_from_text_gemini(prompt)
-                gemini_generated = True
-                # Save the Gemini-generated image
-                output_img_path = os.path.join(SAVE_DIR, f'{str(uid)}_output_img.png')
-                image.save(output_img_path)
-                generated_image_path = output_img_path
-                logger.info(f"Saved Gemini-generated image to {output_img_path}")
-            else:
+            if 'text' not in params:
                 raise ValueError("No input image or text provided")
+            prompt = (
+                f"Generate a high-quality image of {params['text']}. "
+                "Note that the request object should be at the center of the image with a clear plain background. "
+                "This image will be used for 3D model generation so provide the image as clear as possible."
+            )
+            image = self.generate_image_from_text_gemini(prompt)
 
-        image = self.rembg(image)
-        params['image'] = image
+        # 2) Save a copy of the (pre-rembg) reference image for palette extraction
+        ref_img_path = os.path.join(SAVE_DIR, f'{str(uid)}_ref.png')
+        image.save(ref_img_path)
 
-        if 'mesh' in params:
-            mesh = trimesh.load(BytesIO(base64.b64decode(params["mesh"])), file_type='glb')
-        else:
-            seed = params.get("seed", 1234)
-            params['generator'] = torch.Generator(self.device).manual_seed(seed)
-            params['octree_resolution'] = params.get("octree_resolution", 128)
-            params['num_inference_steps'] = params.get("num_inference_steps", 5)
-            params['guidance_scale'] = params.get('guidance_scale', 5.0)
-            params['mc_algo'] = 'mc'
-            import time
-            start_time = time.time()
-            mesh = self.pipeline(**params)[0]
-            logger.info("--- %s seconds ---" % (time.time() - start_time))
+        # 3) Background removal for shape gen
+        image_no_bg = self.rembg(image)
+        params['image'] = image_no_bg
 
-        if params.get('texture', False):
-            mesh = FloaterRemover()(mesh)
-            mesh = DegenerateFaceRemover()(mesh)
-            mesh = FaceReducer()(mesh, max_facenum=params.get('face_count', 40000))
-            mesh = self.pipeline_tex(mesh, image)
+        # 4) Generate mesh
+        seed = params.get("seed", 1234)
+        params['generator'] = torch.Generator(self.device).manual_seed(seed)
+        params['octree_resolution'] = params.get("octree_resolution", 128)
+        params['num_inference_steps'] = params.get("num_inference_steps", 5)
+        params['guidance_scale'] = params.get('guidance_scale', 5.0)
+        params['mc_algo'] = 'mc'
 
-        # Check if user wants pickled mesh instead of file format
-        return_pickle = params.get('return_pickle', False)
-        
-        if return_pickle:
-            # Return pickled mesh object
-            pickle_path = os.path.join(SAVE_DIR, f'{str(uid)}.pkl')
-            with open(pickle_path, 'wb') as f:
-                pickle.dump(mesh, f)
-            response_path = pickle_path
-            download_filename = os.path.basename(pickle_path)
-        else:
-            # Export to file format (glb, obj, etc.)
-            type = params.get('type', 'glb')
-            with tempfile.NamedTemporaryFile(suffix=f'.{type}', delete=False) as temp_file:
-                mesh.export(temp_file.name)
-                mesh = trimesh.load(temp_file.name)
-                save_path = os.path.join(SAVE_DIR, f'{str(uid)}.{type}')
-                mesh.export(save_path)
+        import time
+        start_time = time.time()
+        mesh = self.pipeline(**params)[0]
+        logger.info("--- %s seconds ---" % (time.time() - start_time))
 
-            response_path = save_path
-            download_filename = os.path.basename(save_path)
+        # 5) Light cleanup before painting
+        mesh = FloaterRemover()(mesh)
+        mesh = DegenerateFaceRemover()(mesh)
+        mesh = FaceReducer()(mesh, max_facenum=params.get('face_count', 40000))
 
-        # Handle Gemini image return if requested
-        if gemini_generated and return_gemini_image and generated_image_path:
-            zip_save_path = os.path.join(SAVE_DIR, f'{str(uid)}.zip')
-            with zipfile.ZipFile(zip_save_path, 'w', compression=zipfile.ZIP_DEFLATED) as zip_file:
-                if return_pickle:
-                    mesh_arcname = "model.pkl"
-                else:
-                    mesh_arcname = f"model.{type}"
-                image_arcname = "gemini_image.png"
-                zip_file.write(response_path, arcname=mesh_arcname)
-                zip_file.write(generated_image_path, arcname=image_arcname)
-            response_path = zip_save_path
-            download_filename = os.path.basename(zip_save_path)
+        # 6) Paint vertex colors using the saved reference image
+        mesh = colorize_mesh_from_reference(
+            mesh,
+            reference_image_path=ref_img_path,
+            seed=seed,
+            octaves=4,
+            base_freq=0.8,
+            smoothing_iters=24,
+            world_scale=1.0,
+            center_bias_uv=0.15,
+            local_weight=0.60,
+            palette_snap=0.35
+        )
 
+        # 7) Export ONLY OBJ
+        obj_path = os.path.join(SAVE_DIR, f'{str(uid)}.obj')
+        mesh.export(obj_path)
+
+        # free VRAM
         torch.cuda.empty_cache()
-        return response_path, download_filename, uid
+        return obj_path, os.path.basename(obj_path), uid
 
 
+# ─────────────────────────────────────────────────────────
+# FastAPI app
+# ─────────────────────────────────────────────────────────
 app = FastAPI()
 from fastapi.middleware.cors import CORSMiddleware
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 你可以指定允许的来源
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"],  # 允许所有方法
-    allow_headers=["*"],  # 允许所有头部
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
@@ -334,53 +239,40 @@ async def generate(request: Request):
     uid = uuid.uuid4()
     try:
         file_path, download_filename, uid = worker.generate(uid, params)
-        return FileResponse(file_path, filename=download_filename)
+        # Return ONLY the OBJ file
+        return FileResponse(file_path, filename=download_filename, media_type="text/plain")
     except ValueError as e:
         traceback.print_exc()
         print("Caught ValueError:", e)
-        ret = {
-            "text": server_error_msg,
-            "error_code": 1,
-        }
-        return JSONResponse(ret, status_code=404)
+        return JSONResponse({"text": server_error_msg, "error_code": 1}, status_code=404)
     except torch.cuda.CudaError as e:
         print("Caught torch.cuda.CudaError:", e)
-        ret = {
-            "text": server_error_msg,
-            "error_code": 1,
-        }
-        return JSONResponse(ret, status_code=404)
+        return JSONResponse({"text": server_error_msg, "error_code": 1}, status_code=404)
     except Exception as e:
         print("Caught Unknown Error", e)
         traceback.print_exc()
-        ret = {
-            "text": server_error_msg,
-            "error_code": 1,
-        }
-        return JSONResponse(ret, status_code=404)
+        return JSONResponse({"text": server_error_msg, "error_code": 1}, status_code=404)
 
 
 @app.post("/send")
-async def generate(request: Request):
+async def send(request: Request):
     logger.info("Worker send...")
     params = await request.json()
     uid = uuid.uuid4()
     threading.Thread(target=worker.generate, args=(uid, params,)).start()
-    ret = {"uid": str(uid)}
-    return JSONResponse(ret, status_code=200)
+    return JSONResponse({"uid": str(uid)}, status_code=200)
 
 
 @app.get("/status/{uid}")
 async def status(uid: str):
-    save_file_path = os.path.join(SAVE_DIR, f'{uid}.glb')
-    print(save_file_path, os.path.exists(save_file_path))
-    if not os.path.exists(save_file_path):
-        response = {'status': 'processing'}
-        return JSONResponse(response, status_code=200)
+    obj_path = os.path.join(SAVE_DIR, f'{uid}.obj')
+    exists = os.path.exists(obj_path)
+    print(obj_path, exists)
+    if not exists:
+        return JSONResponse({'status': 'processing'}, status_code=200)
     else:
-        base64_str = base64.b64encode(open(save_file_path, 'rb').read()).decode()
-        response = {'status': 'completed', 'model_base64': base64_str}
-        return JSONResponse(response, status_code=200)
+        # For OBJ, just report completion (no base64 for large text files)
+        return JSONResponse({'status': 'completed'}, status_code=200)
 
 
 if __name__ == "__main__":
@@ -389,28 +281,24 @@ if __name__ == "__main__":
     parser.add_argument("--port", type=int, default=8081)
     parser.add_argument("--model_path", type=str, default='tencent/Hunyuan3D-2mini')
     parser.add_argument("--model_subfolder", type=str, default='hunyuan3d-dit-v2-mini-turbo')
-    parser.add_argument("--tex_model_path", type=str, default='tencent/Hunyuan3D-2')
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--limit-model-concurrency", type=int, default=5)
-    parser.add_argument('--enable_tex', action='store_true')
     parser.add_argument('--use_ckpt', action='store_true', help='Use .ckpt files instead of .safetensors')
-    parser.add_argument('--models_dir', type=str, default=None, help='Directory containing models (sets HY3DGEN_MODELS env var)')
+    parser.add_argument('--models_dir', type=str, default=None, help='Directory containing models (sets HY3DGEN_MODELS)')
     args = parser.parse_args()
     logger.info(f"args: {args}")
 
-    # Set models directory if provided
     if args.models_dir:
         os.environ['HY3DGEN_MODELS'] = args.models_dir
         logger.info(f"Set HY3DGEN_MODELS to {args.models_dir}")
 
     model_semaphore = asyncio.Semaphore(args.limit_model_concurrency)
-
     model_subfolder = args.model_subfolder if args.model_subfolder else None
     use_safetensors = not args.use_ckpt
+
     worker = ModelWorker(model_path=args.model_path,
                          model_subfolder=model_subfolder,
                          device=args.device,
-                         enable_tex=args.enable_tex,
-                         tex_model_path=args.tex_model_path,
                          use_safetensors=use_safetensors)
+
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
