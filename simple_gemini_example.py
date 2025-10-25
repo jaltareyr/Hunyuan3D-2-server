@@ -113,6 +113,6 @@ def generate_3d_from_text(text_prompt, output_filename="model.glb", return_pickl
 if __name__ == "__main__":
     # Example 1: Simple object
     generate_3d_from_text(
-        "A group of 10 people standing (Note: Always draw the object showing diagonal view to provide maximum details for a  3d model's use)",
+        "busty girl in bikini (Note: Always draw the object showing diagonal view to provide maximum details for a 3d model's use)",
         "output.glb"
     )
