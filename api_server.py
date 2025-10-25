@@ -34,6 +34,8 @@ import uvicorn
 from PIL import Image
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse, FileResponse
+from google import genai
+from google.genai import types
 
 from hy3dgen.rembg import BackgroundRemover
 from hy3dgen.shapegen import Hunyuan3DDiTFlowMatchingPipeline, FloaterRemover, DegenerateFaceRemover, FaceReducer, \
@@ -159,6 +161,7 @@ class ModelWorker:
             logger.info(f"Using subfolder {model_subfolder} for model {model_path}")
 
         self.rembg = BackgroundRemover()
+        self.gemini_client = genai.Client()
         pipeline_kwargs = dict(
             use_safetensors=True,
             device=device,
@@ -176,6 +179,25 @@ class ModelWorker:
         # )
         if enable_tex:
             self.pipeline_tex = Hunyuan3DPaintPipeline.from_pretrained(tex_model_path)
+
+    def generate_image_from_text_gemini(self, text_prompt):
+        """Generate an image from text using Gemini API"""
+        logger.info(f"Generating image from text using Gemini: {text_prompt}")
+        
+        response = self.gemini_client.models.generate_content(
+            model="gemini-2.5-flash-image",
+            contents=[text_prompt],
+        )
+        
+        for part in response.candidates[0].content.parts:
+            if part.inline_data is not None:
+                image = Image.open(BytesIO(part.inline_data.data))
+                logger.info("Successfully generated image from text using Gemini")
+                return image
+            elif part.text is not None:
+                logger.info(f"Gemini response text: {part.text}")
+        
+        raise ValueError("Gemini did not return an image")
 
     def get_queue_length(self):
         if model_semaphore is None:
@@ -198,7 +220,8 @@ class ModelWorker:
         else:
             if 'text' in params:
                 text = params["text"]
-                image = self.pipeline_t2i(text)
+                # Use Gemini to generate an image from the text
+                image = self.generate_image_from_text_gemini(text)
             else:
                 raise ValueError("No input image or text provided")
 

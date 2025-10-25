@@ -36,5 +36,4 @@ fastapi
 uvicorn
 rembg
 onnxruntime
-#gevent
-#geventhttpclient
+google-genai
