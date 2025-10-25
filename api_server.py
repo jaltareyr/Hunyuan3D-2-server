@@ -147,20 +147,27 @@ class ModelWorker:
     def __init__(self,
                  model_path='tencent/Hunyuan3D-2mini',
                  tex_model_path='tencent/Hunyuan3D-2',
-                 subfolder='hunyuan3d-dit-v2-mini-turbo',
+                 model_subfolder='hunyuan3d-dit-v2-mini-turbo',
                  device='cuda',
                  enable_tex=False):
         self.model_path = model_path
+        self.model_subfolder = model_subfolder
         self.worker_id = worker_id
         self.device = device
         logger.info(f"Loading the model {model_path} on worker {worker_id} ...")
+        if model_subfolder:
+            logger.info(f"Using subfolder {model_subfolder} for model {model_path}")
 
         self.rembg = BackgroundRemover()
-        self.pipeline = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(
-            model_path,
-            subfolder=subfolder,
+        pipeline_kwargs = dict(
             use_safetensors=True,
             device=device,
+        )
+        if model_subfolder:
+            pipeline_kwargs["subfolder"] = model_subfolder
+        self.pipeline = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(
+            model_path,
+            **pipeline_kwargs,
         )
         self.pipeline.enable_flashvdm(mc_algo='mc')
         # self.pipeline_t2i = HunyuanDiTPipeline(
@@ -302,6 +309,7 @@ if __name__ == "__main__":
     parser.add_argument("--host", type=str, default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8081)
     parser.add_argument("--model_path", type=str, default='tencent/Hunyuan3D-2mini')
+    parser.add_argument("--model_subfolder", type=str, default='hunyuan3d-dit-v2-mini-turbo')
     parser.add_argument("--tex_model_path", type=str, default='tencent/Hunyuan3D-2')
     parser.add_argument("--device", type=str, default="cuda")
     parser.add_argument("--limit-model-concurrency", type=int, default=5)
@@ -311,6 +319,10 @@ if __name__ == "__main__":
 
     model_semaphore = asyncio.Semaphore(args.limit_model_concurrency)
 
-    worker = ModelWorker(model_path=args.model_path, device=args.device, enable_tex=args.enable_tex,
+    model_subfolder = args.model_subfolder if args.model_subfolder else None
+    worker = ModelWorker(model_path=args.model_path,
+                         model_subfolder=model_subfolder,
+                         device=args.device,
+                         enable_tex=args.enable_tex,
                          tex_model_path=args.tex_model_path)
     uvicorn.run(app, host=args.host, port=args.port, log_level="info")
