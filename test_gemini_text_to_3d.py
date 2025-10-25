@@ -34,6 +34,7 @@ def test_sync_text_to_3d(base_url, text_prompt, output_file="output.glb"):
         with open(output_file, "wb") as f:
             f.write(response.content)
         print(f"✅ Success! Model saved to {output_file}")
+        print(f"💡 Note: The Gemini-generated image is saved on the server as *_output_img.png")
         return True
     else:
         print(f"❌ Error: {response.status_code}")
@@ -107,11 +108,11 @@ def test_textured_generation(base_url, text_prompt, output_file="textured_output
     
     payload = {
         "text": text_prompt,
-        "seed": 9999,
+        "seed": 42,
         "octree_resolution": 128,
-        "num_inference_steps": 10,
-        "guidance_scale": 7.0,
-        "texture": True,
+        "num_inference_steps": 5,
+        "guidance_scale": 5.0,
+        "texture": False,
         "face_count": 40000,
         "type": "glb"
     }
@@ -125,6 +126,7 @@ def test_textured_generation(base_url, text_prompt, output_file="textured_output
         with open(output_file, "wb") as f:
             f.write(response.content)
         print(f"✅ Success! Textured model saved to {output_file}")
+        print(f"💡 Note: The Gemini-generated image is saved on the server as *_output_img.png")
         return True
     else:
         print(f"❌ Error: {response.status_code}")
@@ -137,7 +139,7 @@ def main():
     parser.add_argument(
         "--base-url",
         type=str,
-        default="http://localhost:8081",
+        default="https://6b9eca0d4657.ngrok-free.app",
         help="Base URL of the API server (default: http://localhost:8081)"
     )
     parser.add_argument(

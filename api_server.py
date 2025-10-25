@@ -214,6 +214,7 @@ class ModelWorker:
 
     @torch.inference_mode()
     def generate(self, uid, params):
+        gemini_generated = False
         if 'image' in params:
             image = params["image"]
             image = load_image_from_base64(image)
@@ -222,6 +223,11 @@ class ModelWorker:
                 text = params["text"]
                 # Use Gemini to generate an image from the text
                 image = self.generate_image_from_text_gemini(text)
+                gemini_generated = True
+                # Save the Gemini-generated image
+                output_img_path = os.path.join(SAVE_DIR, f'{str(uid)}_output_img.png')
+                image.save(output_img_path)
+                logger.info(f"Saved Gemini-generated image to {output_img_path}")
             else:
                 raise ValueError("No input image or text provided")
 

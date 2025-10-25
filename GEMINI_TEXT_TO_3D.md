@@ -118,10 +118,11 @@ while True:
 ## How It Works
 
 1. When a `text` parameter is provided (and no `image`), the server uses the Gemini API to generate an image from the text description
-2. The generated image undergoes background removal
-3. The processed image is fed into the Hunyuan3D pipeline to generate the 3D mesh
-4. Optionally, textures are applied if requested
-5. The final 3D model is returned in the specified format
+2. The generated image is saved to the server as `{uid}_output_img.png` in the `gradio_cache` directory
+3. The generated image undergoes background removal
+4. The processed image is fed into the Hunyuan3D pipeline to generate the 3D mesh
+5. Optionally, textures are applied if requested
+6. The final 3D model is returned in the specified format
 
 ## Notes
 
@@ -129,3 +130,4 @@ while True:
 - Image generation may add a few seconds to the total processing time
 - For best results, provide detailed and specific text descriptions
 - The quality of the final 3D model depends on both the Gemini image generation and the Hunyuan3D processing
+- The Gemini-generated image is automatically saved on the server as `{uid}_output_img.png` in the `gradio_cache` directory for reference

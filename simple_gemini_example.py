@@ -21,7 +21,7 @@ def generate_3d_from_text(text_prompt, output_filename="model.glb"):
         True if successful, False otherwise
     """
     # API endpoint
-    api_url = "http://localhost:8081/generate"
+    api_url = "https://6b9eca0d4657.ngrok-free.app/generate"
     
     # Request payload
     payload = {
@@ -46,6 +46,7 @@ def generate_3d_from_text(text_prompt, output_filename="model.glb"):
             with open(output_filename, "wb") as f:
                 f.write(response.content)
             print(f"✅ Success! Model saved to {output_filename}")
+            print(f"💡 Note: The Gemini-generated image is saved on the server as *_output_img.png")
             return True
         else:
             print(f"❌ Error: Server returned status code {response.status_code}")

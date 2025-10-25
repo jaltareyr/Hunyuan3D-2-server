@@ -37,3 +37,4 @@ uvicorn
 rembg
 onnxruntime
 google-genai
+requests
