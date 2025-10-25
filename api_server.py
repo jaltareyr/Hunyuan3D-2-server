@@ -163,7 +163,8 @@ class ModelWorker:
             logger.info(f"Using subfolder {model_subfolder} for model {model_path}")
 
         self.rembg = BackgroundRemover()
-        self.gemini_client = genai.Client()
+        # Initialize Gemini client lazily (only when needed)
+        self.gemini_client = None
         pipeline_kwargs = dict(
             use_safetensors=use_safetensors,
             device=device,
@@ -185,6 +186,19 @@ class ModelWorker:
     def generate_image_from_text_gemini(self, text_prompt):
         """Generate an image from text using Gemini API"""
         logger.info(f"Generating image from text using Gemini: {text_prompt}")
+        
+        # Initialize Gemini client on first use
+        if self.gemini_client is None:
+            try:
+                self.gemini_client = genai.Client()
+                logger.info("Initialized Gemini client")
+            except ValueError as e:
+                error_msg = (
+                    "Failed to initialize Gemini client. Please set GOOGLE_API_KEY environment variable. "
+                    "Get your API key from: https://ai.google.dev/"
+                )
+                logger.error(error_msg)
+                raise ValueError(error_msg) from e
         
         response = self.gemini_client.models.generate_content(
             model="gemini-2.5-flash-image",

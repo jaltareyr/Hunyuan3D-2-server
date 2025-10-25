@@ -62,6 +62,13 @@ python api_server.py \
   --device cuda
 ```
 
+**Note**: If you plan to use text-to-3D generation (Gemini integration), also set:
+```bash
+export GOOGLE_API_KEY="your-api-key-here"
+```
+
+If you're only using image-to-3D, the Gemini API key is not required.
+
 ## New Command-Line Arguments
 
 - `--use_ckpt`: Use `.ckpt` checkpoint files instead of `.safetensors` (required for your model)

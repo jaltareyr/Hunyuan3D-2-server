@@ -18,6 +18,10 @@ pip install google-genai
 export GOOGLE_API_KEY="your-api-key-here"
 ```
 
+Get your API key from: https://ai.google.dev/
+
+**Note**: The Gemini API key is only required when using text-to-3D generation. If you're only using image-to-3D, you can skip this step. The Gemini client initializes lazily (only when first needed).
+
 ## Usage
 
 ### Using the `/generate` endpoint with text

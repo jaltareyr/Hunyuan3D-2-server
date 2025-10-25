@@ -11,12 +11,14 @@ You can now generate 3D models directly from text descriptions! The API uses Goo
    pip install google-genai
    ```
 
-2. **Set your Gemini API key:**
+2. **Set your Gemini API key (only needed for text-to-3D):**
    ```bash
    export GOOGLE_API_KEY="your-api-key-here"
    ```
    
    Get your API key from: https://ai.google.dev/
+   
+   **Note**: The API key is only required when using text input. Image-to-3D works without it.
 
 3. **Start the server:**
    ```bash
