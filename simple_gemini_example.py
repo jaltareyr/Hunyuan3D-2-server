@@ -1,118 +1,87 @@
-#!/usr/bin/env python3
-"""
-Simple example of using the Gemini text-to-3D API.
-
-This script demonstrates how to generate a 3D model from a text description
-using the Hunyuan3D API with Gemini integration.
-"""
-
-import io
+import base64
 import os
-import zipfile
-
+from pathlib import Path
 import requests
 
+def generate_obj(
+    server_url: str,
+    out_path: str | None = None,
+    *,
+    image_path: str | None = None,
+    text: str | None = None,
+    seed: int = 1234,
+    octree_resolution: int = 256,
+    num_inference_steps: int = 40,
+    guidance_scale: float = 5.0,
+    face_count: int = 40000,
+    timeout: int = 600,
+) -> str:
+    url = server_url.rstrip("/") + "/generate"
 
-def generate_3d_from_text(text_prompt, output_filename="model.glb", return_pickle=False):
-    """
-    Generate a 3D model from a text description.
-    
-    Args:
-        text_prompt: Text description of the object to generate
-        output_filename: Name of the output file (default: model.glb)
-        return_pickle: If True, request pickled mesh object instead of GLB (default: False)
-    
-    Returns:
-        True if successful, False otherwise
-    """
-    # API endpoint
-    api_url = "https://549d80ad7ada.ngrok-free.app/generate"
-    
-    target_glb_path = os.path.abspath(output_filename)
-    output_dir = os.path.dirname(target_glb_path)
-    os.makedirs(output_dir, exist_ok=True)
+    if image_path:
+        p = Path(image_path)
+        if not p.exists():
+            raise FileNotFoundError(f"Image not found: {p}")
+        with open(p, "rb") as f:
+            img_b64 = base64.b64encode(f.read()).decode("utf-8")
+        payload = {
+            "image": img_b64,
+            "seed": seed,
+            "octree_resolution": octree_resolution,
+            "num_inference_steps": num_inference_steps,
+            "guidance_scale": guidance_scale,
+            "face_count": face_count,
+        }
+    else:
+        if not text:
+            raise ValueError("Provide either image_path or text.")
+        payload = {
+            "text": text,
+            "seed": seed,
+            "octree_resolution": octree_resolution,
+            "num_inference_steps": num_inference_steps,
+            "guidance_scale": guidance_scale,
+            "face_count": face_count,
+        }
 
-    # Request payload
-    payload = {
-        "text": text_prompt,
-        "seed": 1234,
-        "octree_resolution": 256,
-        "num_inference_steps": 40,
-        "guidance_scale": 4.0,
-        "texture": False,
-        "type": "glb",
-        "return_gemini_image": True,
-        "return_pickle": return_pickle,
-    }
-    
-    print(f"Generating 3D model from text: '{text_prompt}'")
-    print("This may take a minute...")
-    
-    # Make the request
-    try:
-        response = requests.post(api_url, json=payload, timeout=300)
-        
-        if response.status_code == 200:
-            content_type = response.headers.get("Content-Type", "")
+    resp = requests.post(url, json=payload, stream=True, timeout=timeout)
+    if resp.status_code != 200:
+        try:
+            detail = resp.json()
+        except Exception:
+            detail = resp.text[:500]
+        raise RuntimeError(f"Server error ({resp.status_code}): {detail}")
 
-            if "application/zip" in content_type:
-                with zipfile.ZipFile(io.BytesIO(response.content)) as zf:
-                    zf.extractall(output_dir)
-                    # Look for pickled mesh or GLB
-                    pkl_member = next((name for name in zf.namelist() if name.endswith(".pkl")), None)
-                    glb_member = next((name for name in zf.namelist() if name.endswith(".glb")), None)
-                    png_member = next((name for name in zf.namelist() if name.endswith(".png")), None)
+    # Derive filename from Content-Disposition if present
+    filename = "model.obj"
+    cd = resp.headers.get("Content-Disposition", "")
+    if "filename=" in cd:
+        # Handles filename="abc.obj" or filename=abc.obj
+        fn = cd.split("filename=")[-1].strip().strip('"').strip("'")
+        if fn:
+            filename = fn
 
-                if pkl_member:
-                    extracted_pkl_path = os.path.join(output_dir, pkl_member)
-                    target_pkl_path = os.path.splitext(target_glb_path)[0] + ".pkl"
-                    os.replace(extracted_pkl_path, target_pkl_path)
-                    print(f"✅ Success! Pickled mesh saved to {target_pkl_path}")
-                elif glb_member:
-                    extracted_glb_path = os.path.join(output_dir, glb_member)
-                    os.replace(extracted_glb_path, target_glb_path)
-                    print(f"✅ Success! Model saved to {target_glb_path}")
-                else:
-                    print("⚠️ Warning: Model file missing from archive")
+    save_to = out_path or filename
+    os.makedirs(os.path.dirname(save_to) or ".", exist_ok=True)
 
-                if png_member:
-                    image_path = os.path.join(output_dir, png_member)
-                    print(f"🖼️ Gemini image saved to {image_path}")
-                else:
-                    print("⚠️ Warning: Gemini image missing from archive")
-            else:
-                # Single file response (not a ZIP)
-                if return_pickle:
-                    target_path = os.path.splitext(target_glb_path)[0] + ".pkl"
-                    with open(target_path, "wb") as f:
-                        f.write(response.content)
-                    print(f"✅ Success! Pickled mesh saved to {target_path}")
-                else:
-                    with open(target_glb_path, "wb") as f:
-                        f.write(response.content)
-                    print(f"✅ Success! Model saved to {target_glb_path}")
-                print("ℹ️ Gemini image not requested; only the mesh was returned.")
-            return True
-        else:
-            print(f"❌ Error: Server returned status code {response.status_code}")
-            print(f"Response: {response.text}")
-            return False
-            
-    except requests.exceptions.Timeout:
-        print("❌ Error: Request timed out")
-        return False
-    except requests.exceptions.ConnectionError:
-        print("❌ Error: Could not connect to server. Is it running?")
-        return False
-    except Exception as e:
-        print(f"❌ Error: {str(e)}")
-        return False
+    with open(save_to, "wb") as f:
+        for chunk in resp.iter_content(chunk_size=8192):
+            if chunk:
+                f.write(chunk)
+
+    # Basic sanity check
+    if not os.path.getsize(save_to):
+        raise RuntimeError("Downloaded file is empty.")
+
+    return save_to
 
 
-# Example usage
+# --- Example usage ---
 if __name__ == "__main__":
-    # Example 1: Simple object
-    generate_3d_from_text(
-        "busty girl in bikini (Note: Always draw the object showing diagonal view to provide maximum details for a 3d model's use)",
-        "output.glb"
+    # 1) Text → OBJ
+    path1 = generate_obj(
+        "https://beckett-unaffiliated-unallegorically.ngrok-free.dev",
+        out_path="outputs/model.obj",
+        text="Big Tree (subject in center, plain background; diagonal angle for max coverage)"
     )
+    print("Saved:", path1)
