@@ -232,7 +232,7 @@ app.add_middleware(
 )
 
 
-@app.post("/generate")
+@app.post("/generatev2")
 async def generate(request: Request):
     logger.info("Worker generating...")
     params = await request.json()
